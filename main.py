@@ -31,6 +31,31 @@ def get_angles(poly_coord):
 
     return angles
 
+def get_centroid(poly_coord):
+    n_sides = len(poly_coord)
+    centroid = (sum([p[0] for p in poly_coord]) / n_sides, sum([p[1] for p in poly_coord]) / n_sides)
+
+    return centroid
+
+def get_factor(poly_coord):
+    factor = 2
+    w = h = 0
+
+    while w / SCREEN_WIDTH < 0.6 and h / SCREEN_HEIGHT < 0.6:
+        poly_coords_shift = [((x - get_centroid(poly_coord)[0]) * factor, ((y - get_centroid(poly_coord)[1])) * factor) for x, y in poly_coord]
+
+        min_x = min(coord[0] for coord in poly_coords_shift)
+        max_x = max(coord[0] for coord in poly_coords_shift)
+        min_y = min(coord[1] for coord in poly_coords_shift)
+        max_y = max(coord[1] for coord in poly_coords_shift)
+
+        w = max_x - min_x
+        h = max_y - min_y
+
+        factor += 1
+    
+    return factor
+
 def draw_polygon(poly_coord, color):
     t.color(color)
 
@@ -65,7 +90,7 @@ def rotate_point(point, origin, angle):
     
     return qx, qy
 
-def get_waypoints(poly_coord, rect_coord, fov, pen_color, should_draw, rect_dim, starting_wp, angle = 0):
+def get_waypoints(poly_coord, rect_coord, fov, pen_color, should_draw, rect_dim, starting_wp, shift, angle = 0):
     rows = math.floor(rect_dim[0] / fov[0])
     cols = math.floor(rect_dim[1] / fov[1])
 
@@ -94,7 +119,7 @@ def get_waypoints(poly_coord, rect_coord, fov, pen_color, should_draw, rect_dim,
             center_x = rot_rect_x + w[0] / 2 + h[0] / 2
             center_y = rot_rect_y + w[1] / 2 + h[1] / 2
 
-            waypoint = (center_x, center_y)
+            waypoint = (center_x - shift[0], center_y - shift[1])
 
             if(is_inside(poly_coord, center_x, center_y)):
                 if waypoint not in waypoints:
@@ -105,10 +130,10 @@ def get_waypoints(poly_coord, rect_coord, fov, pen_color, should_draw, rect_dim,
                             rot_rect_x_start = rot_rect_x
                             rot_rect_y_start = rot_rect_y
                         else:
-                            draw_rectangle(rot_rect_x, rot_rect_y, fov[0], fov[1], pen_color, angle)
+                            draw_rectangle(rot_rect_x - shift[0], rot_rect_y - shift[1], fov[0], fov[1], pen_color, angle)
 
     if should_draw and rot_rect_x_start != None and rot_rect_y_start != None:
-        draw_rectangle(rot_rect_x_start, rot_rect_y_start, fov[0], fov[1], "blue", angle)
+        draw_rectangle(rot_rect_x_start - shift[0], rot_rect_y_start - shift[1], fov[0], fov[1], "blue", angle)
 
     should_draw = False
     return waypoints
@@ -301,7 +326,7 @@ def find_starting_wp(waypoints, starting_point):
         
     return closest_wp
 
-def convert_geographical_to_cartesian_2d(latitude, longitude):
+def convert_geographical_to_cartesian_2d(longitude, latitude):
     lat_rad = math.radians(latitude)
     long_rad = math.radians(longitude)
 
@@ -309,15 +334,13 @@ def convert_geographical_to_cartesian_2d(latitude, longitude):
     x = R * long_rad * math.cos(lat_rad)
     y = R * lat_rad
 
-    return (y, x)
+    return (x, y)
 
 def convert_cartesian_to_geographical_2d(x, y):
     R = 6371.0
-    lat_rad = math.asin(y / R)
-    longitude = math.degrees(x / (R * math.cos(lat_rad)))
-    latitude = math.degrees(lat_rad)
-
-    return (longitude, latitude)
+    lat = math.degrees(math.asin(y / R))
+    lon = math.degrees(x / (R * math.cos(math.radians(lat))))
+    return (lon, lat)
 
 def find_corner_waypoints(waypoints):
     hull = ConvexHull(waypoints)
@@ -327,7 +350,7 @@ def find_corner_waypoints(waypoints):
 if __name__ == '__main__':
     drone_height = float(input("Wysokosc [m]: "))
     focal_length = float(input("Dlugosc ogniskowej [mm]: "))
-    sensor_length = float(input("Szerokosc matrycy [mm]: "))
+    sensor_width = float(input("Szerokosc matrycy [mm]: "))
     sensor_height = float(input("Wysokosc matrycy [mm]: "))
     #coverage = input("Nakladanie sie zdjec [%]: ")
 
@@ -342,7 +365,7 @@ if __name__ == '__main__':
     #FOV = (sensor size * working distance) / focal length
     fov = []
 
-    fov_x = (sensor_length * drone_height) / focal_length
+    fov_x = (sensor_width * drone_height) / focal_length
     fov_y = (sensor_height * drone_height) / focal_length
 
     fov.append(fov_x)
@@ -352,9 +375,16 @@ if __name__ == '__main__':
 
     fov[0] = fov[0] / 1000
     fov[1] = fov[1] / 1000
+
+    #x, y = convert_geographical_to_cartesian_2d(2, 1)
+    #print(x, y)
+    #a, b = convert_cartesian_to_geographical_2d(x, y)
+    #print(a, b)
     
     poly_coord = []
     poly_coord_str = input("Koordynaty wierzcholkow (szerokosc, dlugosc): ")
+
+    t2 = time.time()
 
     for i in range(0, len(poly_coord_str.split()), 2):
         x, y = float(poly_coord_str.split()[i]), float(poly_coord_str.split()[i + 1])
@@ -362,6 +392,14 @@ if __name__ == '__main__':
         poly_coord.append((x, y))
 
     print("Koordynaty wierzcholkow (x, y) [km]: " + str(poly_coord))
+
+    factor = get_factor(poly_coord)
+    x_shift = get_centroid(poly_coord)[0]
+    y_shift = get_centroid(poly_coord)[1]
+
+    shift = (x_shift, y_shift)
+
+    poly_coords_shift = [((x - x_shift) * factor, ((y - y_shift)) * factor) for x, y in poly_coord]
 
     angles = get_angles(poly_coord)
 
@@ -401,7 +439,7 @@ if __name__ == '__main__':
         t0 = time.time()
 
         rotations.append(rotation_angle)
-        net_waypoints = get_waypoints(poly_coord, rotate_polygon(rect_coord, rotation_angle), fov, "green", should_draw, rect_dim, starting_wp, rotation_angle)
+        net_waypoints = get_waypoints(poly_coord, rotate_polygon(rect_coord, rotation_angle), fov, "green", should_draw, rect_dim, starting_wp, (0, 0), rotation_angle)
 
         rotation_angle += 180 - angles[i]
 
@@ -424,7 +462,7 @@ if __name__ == '__main__':
         t1 = time.time()
         total = t1 - t0
 
-        print("Czas: " + str(total))
+        print("Czas [ms]: " + str(total * 1000))
     
     path_index = paths.index(min(paths))
 
@@ -435,21 +473,28 @@ if __name__ == '__main__':
     
     should_draw = True
 
-    draw_polygon(poly_coord, "black")
-    get_waypoints(poly_coord, rotate_polygon(rect_coord, rotations[path_index]), fov, "green", should_draw, rect_dim, starting_wp, rotations[path_index])
+    #get_waypoints(poly_coord, rotate_polygon(rect_coord, rotations[path_index]), fov, "green", True, rect_dim, starting_wp, shift, rotations[path_index])
 
     path = list(dict.fromkeys(cycles[path_index]))
     #print("Corner " + str(find_corner_waypoints(path)))
 
     path.append(starting_wp)
 
-    draw_path(path)
+    path_shift = [((x - x_shift) * factor, ((y - y_shift)) * factor) for x, y in path]
+
+    draw_path(path_shift)
 
     for i in range(len(path)):
         path[i] = convert_cartesian_to_geographical_2d(path[i][0], path[i][1])
 
     print("\nWaypointy (szerokosc, dlugosc): " + str(path))
     print("Suma wszystkich waypointow: " + str(len(path)))
-        
+
+    draw_polygon(poly_coords_shift, "black")
+    
+    t3 = time.time()
+    total = t3 - t2
+    print("Czas [ms]: " + str(total * 1000))
+
     turtle.update()
     turtle.done()
